@@ -1,0 +1,56 @@
+Project Path: pqbip39
+
+Source Tree:
+
+```txt
+pqbip39
+├── Cargo.toml
+└── src
+    ├── lib.rs
+    └── mnemonic.rs
+
+```
+
+`pqbip39/Cargo.toml`:
+
+```toml
+[package]
+name = "pqbip39"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = { version = "2.0.12", default-features = false }
+zeroize = { version = "1.8.1", features = ["zeroize_derive"], default-features = false, optional = true }
+
+[features]
+default = ["none_pq", "pq"]
+pq = []
+none_pq = []
+
+```
+
+`pqbip39/src/lib.rs`:
+
+```rs
+#![no_std]
+
+pub mod mnemonic;
+
+```
+
+`pqbip39/src/mnemonic.rs`:
+
+```rs
+pub const MIN_NB_WORDS: usize = 12;
+pub const MAX_NB_WORDS: usize = 33;
+
+const EOF: u16 = u16::max_value();
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
+pub struct Mnemonic {
+    indicators: [u16; MAX_NB_WORDS],
+}
+
+```
