@@ -97,22 +97,37 @@ mod tests_pbkdf2 {
 
     #[test]
     fn test_mnemonic_byte_len() {
-        // Тестовый случай 1: пустой итератор
         let words: [&str; 0] = [];
         assert_eq!(mnemonic_byte_len(words.iter().cloned()), 0);
 
-        // Тестовый случай 2: одно слово
         let words = ["hello"];
         assert_eq!(mnemonic_byte_len(words.iter().cloned()), 5);
 
-        // Тестовый случай 3: несколько слов
         let words = ["abandon", "ability", "able"];
-        // 7 (abandon) + 1 (space) + 7 (ability) + 1 (space) + 4 (able) = 20
         assert_eq!(mnemonic_byte_len(words.iter().cloned()), 20);
 
-        // Тестовый случай 4: слова разной длины
         let words = ["a", "b", "c", "d"];
-        // 1 + 1 + 1 + 1 + 1 + 1 + 1 = 7
         assert_eq!(mnemonic_byte_len(words.iter().cloned()), 7);
+    }
+
+    #[test]
+    fn test_xor() {
+        let mut a1 = [0b10101010, 0b11001100];
+        let b1 = [0b11110000, 0b00110011];
+        let expected1 = [0b01011010, 0b11111111];
+        xor(&mut a1, &b1);
+        assert_eq!(a1, expected1);
+
+        let mut a2 = [1, 2, 3, 4];
+        let b2 = [0, 0, 0, 0];
+        let expected2 = [1, 2, 3, 4];
+        xor(&mut a2, &b2);
+        assert_eq!(a2, expected2);
+
+        let mut a3 = [0xDE, 0xAD, 0xBE, 0xEF];
+        let b3 = a3.clone();
+        let expected3 = [0, 0, 0, 0];
+        xor(&mut a3, &b3);
+        assert_eq!(a3, expected3);
     }
 }
