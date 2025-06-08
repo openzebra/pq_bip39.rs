@@ -62,6 +62,76 @@ impl<'a> Mnemonic<'a> {
         }
     }
 
+    pub fn parse_normalized(
+        lang_words: &'a [&'a str; MAX_WORDS_DICT],
+        s: &str,
+    ) -> Result<Self, Bip39Error> {
+        const MAX_TOTAL_BITS: usize = MAX_NB_WORDS * 11;
+        const MAX_ENTROPY_BYTES: usize = 256 / 8;
+
+        let mut temp_words = [""; MAX_NB_WORDS + 1];
+        let mut word_count = 0;
+        for word in s.split_whitespace() {
+            if word_count >= temp_words.len() {
+                word_count += 1;
+                break;
+            }
+            temp_words[word_count] = word;
+            word_count += 1;
+        }
+
+        if is_invalid_word_count(word_count) {
+            return Err(Bip39Error::BadWordCount(word_count));
+        }
+
+        let total_bits = word_count * 11;
+        let checksum_len_bits = word_count / 3;
+        let entropy_len_bits = total_bits - checksum_len_bits;
+        let entropy_len_bytes = entropy_len_bits / 8;
+
+        let mut indicators = [EOF; MAX_NB_WORDS];
+        let mut bits = [false; MAX_TOTAL_BITS];
+
+        for i in 0..word_count {
+            let word_str = temp_words[i];
+            match lang_words.iter().position(|&w| w == word_str) {
+                Some(idx) => {
+                    let idx_u16 = idx as u16;
+                    indicators[i] = idx_u16;
+                    for j in 0..11 {
+                        bits[i * 11 + j] = (idx_u16 >> (10 - j)) & 1 == 1;
+                    }
+                }
+                None => return Err(Bip39Error::UnknownWord(i)),
+            }
+        }
+
+        let mut entropy = [0u8; MAX_ENTROPY_BYTES];
+        for i in 0..entropy_len_bytes {
+            for j in 0..8 {
+                if bits[i * 8 + j] {
+                    entropy[i] |= 1 << (7 - j);
+                }
+            }
+        }
+
+        let hash = Sha256::digest(&entropy[0..entropy_len_bytes]);
+        let mnemonic_checksum_bits = &bits[entropy_len_bits..total_bits];
+
+        for i in 0..checksum_len_bits {
+            let expected_bit = (hash[i / 8] >> (7 - (i % 8))) & 1 == 1;
+            if mnemonic_checksum_bits[i] != expected_bit {
+                return Err(Bip39Error::InvalidChecksum);
+            }
+        }
+
+        Ok(Mnemonic {
+            lang_words,
+            indicators,
+            word_count,
+        })
+    }
+
     pub fn from_entropy(
         lang_words: &'a [&'a str; MAX_WORDS_DICT],
         entropy: &[u8],
@@ -386,7 +456,6 @@ mod tests_mnemonic {
     fn test_from_entropy_valid_256_bits() {
         let entropy = [0u8; 32];
         let mnemonic = Mnemonic::from_entropy(&EN_WORDS, &entropy).unwrap();
-        dbg!(&mnemonic.word_count);
         assert_eq!(mnemonic.word_count, 24);
     }
 
@@ -453,5 +522,40 @@ mod tests_mnemonic {
             let digest = Sha256::digest(&ent);
             assert_eq!(digest[0] >> (8 - (word_count / 3)), cs);
         }
+    }
+
+    #[test]
+    fn test_invalid_engish() {
+        assert_eq!(
+            Mnemonic::parse_normalized(
+                &EN_WORDS,
+                "getter advice cage absurd amount doctor acoustic avoid letter advice cage above",
+            ),
+            Err(Bip39Error::UnknownWord(0))
+        );
+
+        assert_eq!(
+            Mnemonic::parse_normalized(
+                &EN_WORDS,
+                "letter advice cagex absurd amount doctor acoustic avoid letter advice cage above",
+            ),
+            Err(Bip39Error::UnknownWord(2))
+        );
+
+        assert_eq!(
+            Mnemonic::parse_normalized(
+                &EN_WORDS,
+                "advice cage absurd amount doctor acoustic avoid letter advice cage above",
+            ),
+            Err(Bip39Error::BadWordCount(11))
+        );
+
+        assert_eq!(
+            Mnemonic::parse_normalized(
+                &EN_WORDS,
+                "primary advice cage absurd amount doctor acoustic avoid letter advice cage above",
+            ),
+            Err(Bip39Error::InvalidChecksum)
+        );
     }
 }
