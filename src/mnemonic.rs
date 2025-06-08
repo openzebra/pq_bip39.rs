@@ -4,6 +4,7 @@ use sha2::{Digest, Sha256};
 
 pub const MIN_NB_WORDS: usize = 12;
 pub const MAX_NB_WORDS: usize = 33;
+pub const MAX_ENTROPY_BYTES: usize = 32;
 pub const MAX_WORDS_DICT: usize = 2048;
 pub const PBKDF2_ROUNDS: u32 = 2048;
 pub const SEED_BYTE_LEN: usize = 64;
@@ -21,6 +22,48 @@ pub struct Mnemonic<'a> {
 pub struct MnemonicIter<'a, 'b> {
     mnemonic: &'b Mnemonic<'a>,
     position: usize,
+}
+
+#[derive(Clone)]
+pub struct EntropyIter<'a> {
+    mnemonic: &'a Mnemonic<'a>,
+    word_idx: usize,
+    bits: u32,
+    bit_count: u32,
+    bytes_produced: usize,
+    bytes_to_produce: usize,
+}
+
+impl<'a> Iterator for EntropyIter<'a> {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.bytes_produced >= self.bytes_to_produce {
+            return None;
+        }
+
+        while self.bit_count < 8 {
+            if self.word_idx >= self.mnemonic.word_count {
+                return None;
+            }
+
+            let index = self.mnemonic.indicators[self.word_idx];
+
+            self.bits = (self.bits << 11) | u32::from(index);
+            self.bit_count += 11;
+            self.word_idx += 1;
+        }
+
+        let shift = self.bit_count - 8;
+        let byte = (self.bits >> shift) as u8;
+
+        self.bit_count -= 8;
+        self.bits &= (1 << self.bit_count) - 1;
+
+        self.bytes_produced += 1;
+
+        Some(byte)
+    }
 }
 
 impl<'a, 'b> Iterator for MnemonicIter<'a, 'b> {
@@ -138,36 +181,16 @@ impl<'a> Mnemonic<'a> {
         })
     }
 
-    pub fn to_entropy_array(&self) -> Result<([u8; 32], usize), Bip39Error> {
+    pub fn to_entropy(&'a self) -> EntropyIter<'a> {
         let entropy_bytes_len = (self.word_count / 3) * 4;
-        let mut entropy = [0u8; 32];
-
-        let mut bits = 0u32;
-        let mut bit_count = 0;
-        let mut entropy_idx = 0;
-
-        for i in 0..self.word_count {
-            let index = self.indicators[i];
-
-            bits = (bits << 11) | u32::from(index);
-            bit_count += 11;
-
-            while bit_count >= 8 {
-                let shift = bit_count - 8;
-                let byte = (bits >> shift) as u8;
-
-                if entropy_idx < entropy_bytes_len {
-                    entropy[entropy_idx] = byte;
-                    entropy_idx += 1;
-                }
-
-                bit_count -= 8;
-
-                bits &= (1 << bit_count) - 1;
-            }
+        EntropyIter {
+            mnemonic: self,
+            word_idx: 0,
+            bits: 0,
+            bit_count: 0,
+            bytes_produced: 0,
+            bytes_to_produce: entropy_bytes_len,
         }
-
-        Ok((entropy, entropy_bytes_len))
     }
 
     pub fn from_entropy(
@@ -780,19 +803,12 @@ mod tests_mnemonic {
                     "failed vector: {}",
                     mnemonic_str
                 );
-                dbg!(mnemonic.to_entropy_array().unwrap());
-                // assert_eq!(
-                //     &entropy,
-                //     &mnemonic.to_entropy_array(),
-                //     "failed vector: {}",
-                //     mnemonic_str
-                // );
-                // assert_eq!(
-                //     &entropy[..],
-                //     &mnemonic.to_entropy_array().0[0..entropy.len()],
-                //     "failed vector: {}",
-                //     mnemonic_str
-                // );
+                assert_eq!(
+                    &entropy,
+                    &mnemonic.to_entropy().into_iter().collect::<Vec<u8>>(),
+                    "failed vector: {}",
+                    mnemonic_str
+                );
             }
         }
     }
