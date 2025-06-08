@@ -1,10 +1,7 @@
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha512};
 
-use crate::{
-    errors::Bip39Error,
-    mnemonic::{Mnemonic, SEED_BYTE_LEN},
-};
+use crate::{errors::Bip39Error, mnemonic::SEED_BYTE_LEN};
 
 const SALT_PREFIX: &str = "mnemonic";
 
@@ -29,19 +26,22 @@ fn xor(a: &mut [u8], b: &[u8]) {
     }
 }
 
-pub fn pbkdf2<'a>(
-    mnemonic: &Mnemonic<'a>,
+pub fn pbkdf2<'a, I>(
+    mnemonic: I,
     passphrase: &[u8],
     c: u32,
-) -> Result<[u8; SEED_BYTE_LEN], Bip39Error> {
+) -> Result<[u8; SEED_BYTE_LEN], Bip39Error>
+where
+    I: Iterator<Item = &'a str> + Clone,
+{
     const BLOCK_SIZE: usize = 128;
     let mut key_buffer = [0u8; BLOCK_SIZE];
 
-    let mnemonic_len = mnemonic_byte_len(mnemonic.iter());
+    let mnemonic_len = mnemonic_byte_len(mnemonic.clone());
 
     let key = if mnemonic_len > BLOCK_SIZE {
         let mut hasher = Sha512::new();
-        for (i, word) in mnemonic.iter().enumerate() {
+        for (i, word) in mnemonic.clone().enumerate() {
             if i > 0 {
                 hasher.update(b" ");
             }
@@ -53,7 +53,7 @@ pub fn pbkdf2<'a>(
         &key_buffer[..len]
     } else {
         let mut cursor = 0;
-        for (i, word) in mnemonic.iter().enumerate() {
+        for (i, word) in mnemonic.enumerate() {
             if i > 0 {
                 key_buffer[cursor] = b' ';
                 cursor += 1;
@@ -129,5 +129,25 @@ mod tests_pbkdf2 {
         let expected3 = [0, 0, 0, 0];
         xor(&mut a3, &b3);
         assert_eq!(a3, expected3);
+    }
+
+    #[test]
+    fn test_pbkdf2() {
+        let mnemonic = ["word1", "word2", "word3"].iter().map(|&s| s);
+        let salt = b"salt";
+        let iterations = 1;
+        let result = pbkdf2(mnemonic, salt, iterations).unwrap();
+
+        assert_eq!(result.len(), 64);
+        assert_ne!(result, [0u8; 64]);
+        assert_eq!(
+            [
+                86, 130, 218, 167, 48, 166, 30, 74, 25, 139, 29, 236, 12, 8, 147, 130, 209, 25, 57,
+                217, 46, 208, 137, 18, 0, 235, 182, 2, 198, 34, 120, 193, 235, 137, 250, 64, 84,
+                77, 82, 46, 152, 18, 125, 151, 204, 241, 21, 57, 250, 206, 116, 67, 96, 238, 8, 18,
+                117, 245, 196, 125, 250, 145, 49, 19,
+            ],
+            result
+        );
     }
 }
