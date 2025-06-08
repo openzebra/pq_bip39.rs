@@ -4,13 +4,12 @@ A no_std compatible Rust implementation of the BIP-39 mnemonic code standard for
 
 ## Features
 
-- Supports 12 to 24-word mnemonic phrases
+- Supports 12 to 33-word mnemonic phrases
 - Generates seeds from mnemonics using PBKDF2
 - Validates checksums and word counts
 - Converts between entropy and mnemonic phrases
 - Compatible with `no_std` environments
 - Optional `std` and `zeroize` features
-- Includes English wordlist (2048 words)
 
 ## Installation
 
