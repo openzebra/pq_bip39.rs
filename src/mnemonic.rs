@@ -447,9 +447,23 @@ mod tests_mnemonic {
     fn test_from_entropy_valid_128_bits() {
         let entropy = [0u8; 16];
         let mnemonic = Mnemonic::from_entropy(&EN_WORDS, &entropy).unwrap();
+
         assert_eq!(mnemonic.word_count, 12);
-        let expected_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-        assert_eq!(mnemonic.to_string(), expected_phrase);
+
+        let expected_words = [
+            "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
+            "abandon", "abandon", "abandon", "about",
+        ];
+
+        let mut mnemonic_iter = mnemonic.iter();
+        let mut expected_iter = expected_words.iter();
+
+        for _ in 0..expected_words.len() {
+            assert_eq!(mnemonic_iter.next(), expected_iter.next().copied());
+        }
+
+        assert_eq!(mnemonic_iter.next(), None);
+        assert_eq!(expected_iter.next(), None);
     }
 
     #[test]
