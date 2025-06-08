@@ -52,7 +52,7 @@ impl<'a> Mnemonic<'a> {
     pub fn from(dictionary: &'a [&'a str; MAX_WORDS_DICT]) -> Self {
         Self {
             lang_words: dictionary,
-            indicators: [0u16; MAX_NB_WORDS],
+            indicators: [EOF; MAX_NB_WORDS],
             word_count: 0,
         }
     }
@@ -136,6 +136,38 @@ impl<'a> Mnemonic<'a> {
             indicators,
             word_count,
         })
+    }
+
+    pub fn to_entropy_array(&self) -> Result<([u8; 32], usize), Bip39Error> {
+        let entropy_bytes_len = (self.word_count / 3) * 4;
+        let mut entropy = [0u8; 32];
+
+        let mut bits = 0u32;
+        let mut bit_count = 0;
+        let mut entropy_idx = 0;
+
+        for i in 0..self.word_count {
+            let index = self.indicators[i];
+
+            bits = (bits << 11) | u32::from(index);
+            bit_count += 11;
+
+            while bit_count >= 8 {
+                let shift = bit_count - 8;
+                let byte = (bits >> shift) as u8;
+
+                if entropy_idx < entropy_bytes_len {
+                    entropy[entropy_idx] = byte;
+                    entropy_idx += 1;
+                }
+
+                bit_count -= 8;
+
+                bits &= (1 << bit_count) - 1;
+            }
+        }
+
+        Ok((entropy, entropy_bytes_len))
     }
 
     pub fn from_entropy(
@@ -748,9 +780,10 @@ mod tests_mnemonic {
                     "failed vector: {}",
                     mnemonic_str
                 );
+                dbg!(mnemonic.to_entropy_array().unwrap());
                 // assert_eq!(
                 //     &entropy,
-                //     &mnemonic.to_entropy(),
+                //     &mnemonic.to_entropy_array(),
                 //     "failed vector: {}",
                 //     mnemonic_str
                 // );
