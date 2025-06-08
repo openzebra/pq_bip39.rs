@@ -13,7 +13,7 @@ const EOF: u16 = u16::max_value();
 pub struct Mnemonic<'a> {
     lang_words: &'a [&'a str; MAX_WORDS_DICT],
     indicators: [u16; MAX_NB_WORDS],
-    word_count: usize,
+    pub word_count: usize,
 }
 
 pub struct MnemonicIter<'a, 'b> {
@@ -137,6 +137,12 @@ impl<'a> Mnemonic<'a> {
             indicators,
             word_count,
         })
+    }
+
+    pub fn checksum(&self) -> u8 {
+        let last_word = self.indicators[self.word_count - 1];
+        let mask = 0xFF >> (8 - self.word_count / 3);
+        last_word as u8 & mask
     }
 }
 
@@ -403,5 +409,49 @@ mod tests_mnemonic {
         let entropy = [0u8; 36];
         let result = Mnemonic::from_entropy(&EN_WORDS, &entropy);
         assert_eq!(result, Err(Bip39Error::BadEntropyBitCount(288)));
+    }
+
+    #[test]
+    fn test_checksum() {
+        let vectors = [
+            "00000000000000000000000000000000",
+            "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+            "80808080808080808080808080808080",
+            "ffffffffffffffffffffffffffffffff",
+            "000000000000000000000000000000000000000000000000",
+            "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+            "808080808080808080808080808080808080808080808080",
+            "ffffffffffffffffffffffffffffffffffffffffffffffff",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+            "8080808080808080808080808080808080808080808080808080808080808080",
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "9e885d952ad362caeb4efe34a8e91bd2",
+            "6610b25967cdcca9d59875f5cb50b0ea75433311869e930b",
+            "68a79eaca2324873eacc50cb9c6eca8cc68ea5d936f98787c60c7ebc74e6ce7c",
+            "c0ba5a8e914111210f2bd131f3d5e08d",
+            "6d9be1ee6ebd27a258115aad99b7317b9c8d28b6d76431c3",
+            "9f6a2878b2520799a44ef18bc7df394e7061a224d2c33cd015b157d746869863",
+            "23db8160a31d3e0dca3688ed941adbf3",
+            "8197a4a47f0425faeaa69deebc05ca29c0a5b5cc76ceacc0",
+            "066dca1a2bb7e8a1db2832148ce9933eea0f3ac9548d793112d9a95c9407efad",
+            "f30f8c1da665478f49b001d94c5fc452",
+            "c10ec20dc3cd9f652c7fac2f1230f7a3c828389a14392f05",
+            "f585c11aec520db57dd353c69554b21a89b20fb0650966fa0a9d6f74fd989d8f",
+            "ed3b83f0d7913a19667a1cfd7298cd57",
+            "70639a4e81b151277b345476d169a3743ff3c141",
+            "ba2520298b92063a7a0ee1d453ba92513af81d4f86e1d336",
+            "9447d2cf44349cd88a58f5b4ff6f83b9a2d54c42f033e12b8e4d00cc",
+            "38711e550dc6557df8082b2a87f7860ebbe47ea5867a7068f5f0f5b85db68be8",
+        ];
+
+        for entropy_hex in &vectors {
+            let ent = hex::decode(entropy_hex).unwrap();
+            let m = Mnemonic::from_entropy(&EN_WORDS, &ent).unwrap();
+            let word_count = m.word_count;
+            let cs = m.checksum();
+            let digest = Sha256::digest(&ent);
+            assert_eq!(digest[0] >> (8 - (word_count / 3)), cs);
+        }
     }
 }
