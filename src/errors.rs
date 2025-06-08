@@ -1,7 +1,7 @@
 use hmac::digest::InvalidLength;
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq)]
 pub enum Bip39Error {
     #[error("Invalid word count: {0}")]
     BadWordCount(usize),
