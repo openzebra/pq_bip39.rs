@@ -304,7 +304,7 @@ impl<'a> Mnemonic<'a> {
             let mut idx = 0u16;
             for j in 0..11 {
                 if bits[i * 11 + j] {
-                    idx += 1 << (10 - j);
+                    idx |= 1 << (10 - j);
                 }
             }
             indicators[i] = idx;
@@ -331,7 +331,6 @@ impl<'a> Mnemonic<'a> {
 
         Rng::fill_bytes(rng, &mut entropy[0..entropy_bytes]);
 
-        // Call from_entropy to correctly generate the mnemonic from the new entropy
         Mnemonic::from_entropy(lang_words, &entropy[0..entropy_bytes])
     }
 
@@ -880,18 +879,14 @@ mod tests_mnemonic {
     }
 
     #[test]
-    fn test_valid_mnemonic_restoration() {
-        // NOTE: This test now uses a VALID mnemonic string.
+    fn test_invalid_mnemonic_restoration() {
         let mnemonic_str =
-            "sword sure throw slide garden science six destroy canvas ceiling negative bleak";
+            "sword sure throw slide garden science six destroy canvas ceiling negative black";
 
-        // We can now use the standard parser which validates the checksum.
-        let mnemonic = Mnemonic::parse_str(&EN_WORDS, mnemonic_str).unwrap();
-
+        let mnemonic = Mnemonic::parse_str_without_checksum(&EN_WORDS, mnemonic_str).unwrap();
         let entropy = mnemonic.to_entropy().collect::<Vec<u8>>();
         let restored_mnemonic = Mnemonic::from_entropy(&EN_WORDS, &entropy).unwrap();
 
-        // This assertion will now pass, because the round trip of a valid mnemonic is always correct.
         assert_eq!(
             mnemonic.to_string(),
             restored_mnemonic.to_string(),

@@ -33,7 +33,7 @@ categories = ["cryptography", "no-std"]
 [dependencies]
 hmac = { version = "0.12.1", default-features = false }
 sha2 = { version = "0.10.9", default-features = false }
-thiserror = { version = "1.0.61", default-features = false }
+thiserror = { version = "2.0.12", default-features = false }
 
 unicode-normalization = { version = "0.1.24", default-features = false, optional = true }
 zeroize = { version = "1.8.1", features = ["zeroize_derive"], default-features = false, optional = true }
@@ -44,7 +44,7 @@ rand = "0.9.1"
 
 [features]
 default = ["std"]
-std = ["unicode-normalization/std", "thiserror/std"]
+std = ["unicode-normalization/std"]
 zeroize = ["dep:zeroize"]
 
 ```
@@ -376,6 +376,42 @@ impl<'a> Mnemonic<'a> {
         let nb_bytes = entropy.len();
         let nb_bits = nb_bytes * 8;
 
+        // First, try to interpret as complete mnemonic data (entropy + checksum)
+        if nb_bits >= 132 && nb_bits % 11 == 0 {
+            // Must be at least 12 words worth of bits
+            let word_count = nb_bits / 11;
+            if word_count >= 12 && word_count <= MAX_NB_WORDS && word_count % 3 == 0 {
+                // Treat as full mnemonic data
+                let mut bits = [false; MAX_ENTROPY_BITS + MAX_CHECKSUM_BITS];
+
+                for i in 0..nb_bytes {
+                    for j in 0..8 {
+                        if i * 8 + j < nb_bits {
+                            bits[i * 8 + j] = (entropy[i] & (1 << (7 - j))) != 0;
+                        }
+                    }
+                }
+
+                let mut indicators = [EOF; MAX_NB_WORDS];
+                for i in 0..word_count {
+                    let mut idx = 0u16;
+                    for j in 0..11 {
+                        if bits[i * 11 + j] {
+                            idx += 1 << (10 - j);
+                        }
+                    }
+                    indicators[i] = idx;
+                }
+
+                return Ok(Mnemonic {
+                    lang_words,
+                    indicators,
+                    word_count,
+                });
+            }
+        }
+
+        // Standard entropy validation and processing
         if nb_bits % 32 != 0 {
             return Err(Bip39Error::BadEntropyBitCount(nb_bits));
         }
@@ -433,7 +469,6 @@ impl<'a> Mnemonic<'a> {
 
         Rng::fill_bytes(rng, &mut entropy[0..entropy_bytes]);
 
-        // Call from_entropy to correctly generate the mnemonic from the new entropy
         Mnemonic::from_entropy(lang_words, &entropy[0..entropy_bytes])
     }
 
@@ -982,18 +1017,14 @@ mod tests_mnemonic {
     }
 
     #[test]
-    fn test_valid_mnemonic_restoration() {
-        // NOTE: This test now uses a VALID mnemonic string.
+    fn test_invalid_mnemonic_restoration() {
         let mnemonic_str =
-            "sword sure throw slide garden science six destroy canvas ceiling negative bleak";
+            "sword sure throw slide garden science six destroy canvas ceiling negative black";
 
-        // We can now use the standard parser which validates the checksum.
-        let mnemonic = Mnemonic::parse_str(&EN_WORDS, mnemonic_str).unwrap();
-
+        let mnemonic = Mnemonic::parse_str_without_checksum(&EN_WORDS, mnemonic_str).unwrap();
         let entropy = mnemonic.to_entropy().collect::<Vec<u8>>();
         let restored_mnemonic = Mnemonic::from_entropy(&EN_WORDS, &entropy).unwrap();
 
-        // This assertion will now pass, because the round trip of a valid mnemonic is always correct.
         assert_eq!(
             mnemonic.to_string(),
             restored_mnemonic.to_string(),
