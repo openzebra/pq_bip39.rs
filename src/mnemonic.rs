@@ -355,6 +355,13 @@ impl<'a> Mnemonic<'a> {
 mod tests_mnemonic {
     use super::*;
     use hex;
+    use rand::{RngCore, SeedableRng};
+
+    impl<T: RngCore> crate::rng::Rng for T {
+        fn fill_bytes(&mut self, dest: &mut [u8]) {
+            RngCore::fill_bytes(self, dest);
+        }
+    }
 
     const JA_WORDS: [&str; 2048] = [
         "あいこくしん",
@@ -3130,6 +3137,27 @@ mod tests_mnemonic {
                 "failed vector: {}",
                 mnemonic_str
             );
+        }
+    }
+
+    #[test]
+    fn test_generate_and_validate_all_word_counts() {
+        let mut rng = rand::rngs::StdRng::from_os_rng();
+
+        for word_count in (MIN_NB_WORDS..=24).step_by(3) {
+            let mnemonic = Mnemonic::generate(&mut rng, &EN_WORDS, word_count).unwrap();
+            assert_eq!(mnemonic.word_count, word_count);
+
+            let entropy = mnemonic.to_entropy().collect::<Vec<u8>>();
+            let restored_mnemonic = Mnemonic::from_entropy(&EN_WORDS, &entropy).unwrap();
+            assert_eq!(mnemonic, restored_mnemonic);
+
+            let checksum_bits = word_count / 3;
+            let digest = Sha256::digest(&entropy);
+            let expected_checksum = digest[0] >> (8 - checksum_bits);
+            let actual_checksum = mnemonic.checksum();
+
+            assert_eq!(actual_checksum, expected_checksum);
         }
     }
 }

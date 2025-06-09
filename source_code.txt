@@ -20,7 +20,7 @@ pqbip39
 ```toml
 [package]
 name = "pqbip39"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Rinat hicc0rus@gmail.com"]
 description = "A no_std compatible implementation of the BIP39 mnemonic code standard."
@@ -215,7 +215,17 @@ impl<'a> Mnemonic<'a> {
     }
 
     pub fn to_seed(&self, passphrase: &str) -> Result<[u8; SEED_BYTE_LEN], Bip39Error> {
-        pbkdf2(self.iter(), passphrase.as_bytes(), PBKDF2_ROUNDS)
+        #[cfg(not(feature = "std"))]
+        let normalized_passphrase = passphrase;
+
+        #[cfg(feature = "std")]
+        let normalized_passphrase = {
+            let mut cow = passphrase.into();
+            Mnemonic::normalize_utf8_cow(&mut cow);
+            cow
+        };
+
+        pbkdf2(self.iter(), normalized_passphrase.as_bytes(), PBKDF2_ROUNDS)
     }
 
     #[inline]
