@@ -1,6 +1,6 @@
 [package]
 name = "pqbip39"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Rinat hicc0rus@gmail.com"]
 description = "A no_std compatible implementation of the BIP39 mnemonic code standard."
