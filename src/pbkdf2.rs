@@ -1,4 +1,5 @@
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
+use secrecy::{SecretBox, zeroize::Zeroize};
 use sha2::{Digest, Sha512};
 
 use crate::{errors::Bip39Error, mnemonic::SEED_BYTE_LEN};
@@ -30,7 +31,7 @@ pub fn pbkdf2<'a, I>(
     mnemonic: I,
     passphrase: &[u8],
     c: u32,
-) -> Result<[u8; SEED_BYTE_LEN], Bip39Error>
+) -> Result<SecretBox<[u8; SEED_BYTE_LEN]>, Bip39Error>
 where
     I: Iterator<Item = &'a str> + Clone,
 {
@@ -67,6 +68,8 @@ where
     };
 
     let prf = Hmac::<Sha512>::new_from_slice(key)?;
+    key_buffer.zeroize();
+
     let h_len = <Sha512 as Digest>::output_size();
     let mut result = [0u8; SEED_BYTE_LEN];
 
@@ -88,7 +91,7 @@ where
             xor(chunk, &u);
         }
     }
-    Ok(result)
+    Ok(SecretBox::new(Box::new(result)))
 }
 
 #[cfg(test)]
@@ -133,13 +136,15 @@ mod tests_pbkdf2 {
 
     #[test]
     fn test_pbkdf2() {
+        use secrecy::ExposeSecret;
         let mnemonic = ["word1", "word2", "word3"].iter().map(|&s| s);
         let salt = b"salt";
         let iterations = 1;
         let result = pbkdf2(mnemonic, salt, iterations).unwrap();
+        let seed = result.expose_secret();
 
-        assert_eq!(result.len(), 64);
-        assert_ne!(result, [0u8; 64]);
+        assert_eq!(seed.len(), 64);
+        assert_ne!(*seed, [0u8; 64]);
         assert_eq!(
             [
                 86, 130, 218, 167, 48, 166, 30, 74, 25, 139, 29, 236, 12, 8, 147, 130, 209, 25, 57,
@@ -147,7 +152,7 @@ mod tests_pbkdf2 {
                 77, 82, 46, 152, 18, 125, 151, 204, 241, 21, 57, 250, 206, 116, 67, 96, 238, 8, 18,
                 117, 245, 196, 125, 250, 145, 49, 19,
             ],
-            result
+            *seed
         );
     }
 }

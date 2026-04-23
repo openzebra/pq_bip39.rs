@@ -5,6 +5,7 @@ use unicode_normalization::UnicodeNormalization;
 
 use crate::{errors::Bip39Error, pbkdf2::pbkdf2, rng::Rng, utils::is_invalid_word_count};
 use core::fmt;
+use secrecy::{ExposeSecret, SecretBox, SecretSlice, SecretString, zeroize::Zeroize};
 use sha2::{Digest, Sha256};
 
 pub const MIN_NB_WORDS: usize = 12;
@@ -16,7 +17,7 @@ pub const SEED_BYTE_LEN: usize = 64;
 
 const EOF: u16 = u16::max_value();
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(PartialEq, Eq, Clone)]
 pub struct Mnemonic<'a> {
     lang_words: &'a [&'a str; MAX_WORDS_DICT],
     indicators: [u16; MAX_NB_WORDS],
@@ -84,15 +85,16 @@ impl<'a, 'b> Iterator for MnemonicIter<'a, 'b> {
     }
 }
 
-impl<'a> fmt::Display for Mnemonic<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for (i, word) in self.iter().enumerate() {
-            if i > 0 {
-                f.write_str(" ")?;
-            }
-            f.write_str(word)?;
-        }
-        Ok(())
+impl<'a> fmt::Debug for Mnemonic<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Mnemonic([REDACTED])")
+    }
+}
+
+impl<'a> Zeroize for Mnemonic<'a> {
+    fn zeroize(&mut self) {
+        self.indicators.zeroize();
+        self.word_count.zeroize();
     }
 }
 
@@ -105,20 +107,35 @@ impl<'a> Mnemonic<'a> {
         }
     }
 
-    pub fn iter<'b>(&'b self) -> MnemonicIter<'a, 'b> {
+    pub(crate) fn iter<'b>(&'b self) -> MnemonicIter<'a, 'b> {
         MnemonicIter {
             mnemonic: self,
             position: 0,
         }
     }
 
-    pub fn to_seed(&self, passphrase: &str) -> Result<[u8; SEED_BYTE_LEN], Bip39Error> {
+    pub fn words(&self) -> impl Iterator<Item = SecretString> + '_ {
+        self.iter().map(SecretString::from)
+    }
+
+    pub fn to_phrase(&self) -> SecretString {
+        let mut phrase = String::new();
+        for (i, word) in self.iter().enumerate() {
+            if i > 0 {
+                phrase.push(' ');
+            }
+            phrase.push_str(word);
+        }
+        SecretString::from(phrase)
+    }
+
+    pub fn to_seed(&self, passphrase: &SecretString) -> Result<SecretBox<[u8; SEED_BYTE_LEN]>, Bip39Error> {
         #[cfg(not(feature = "std"))]
-        let normalized_passphrase = passphrase;
+        let normalized_passphrase = passphrase.expose_secret();
 
         #[cfg(feature = "std")]
         let normalized_passphrase = {
-            let mut cow = passphrase.into();
+            let mut cow = passphrase.expose_secret().into();
             Mnemonic::normalize_utf8_cow(&mut cow);
             cow
         };
@@ -137,19 +154,19 @@ impl<'a> Mnemonic<'a> {
 
     pub fn parse_str(
         lang_words: &'a [&'a str; MAX_WORDS_DICT],
-        s: &str,
+        s: &SecretString,
     ) -> Result<Self, Bip39Error> {
         const MAX_TOTAL_BITS: usize = MAX_NB_WORDS * 11;
         const MAX_ENTROPY_BYTES_LOCAL: usize = 256 / 8;
 
         #[cfg(feature = "std")]
         let s_normalized = {
-            let mut cow = s.into();
+            let mut cow = s.expose_secret().into();
             Mnemonic::normalize_utf8_cow(&mut cow);
             cow
         };
         #[cfg(not(feature = "std"))]
-        let s_normalized = s;
+        let s_normalized = s.expose_secret();
 
         let mut temp_words = [""; MAX_NB_WORDS + 1];
         let mut word_count = 0;
@@ -198,6 +215,8 @@ impl<'a> Mnemonic<'a> {
         }
 
         let hash = Sha256::digest(&entropy[0..entropy_len_bytes]);
+        entropy.zeroize();
+
         let mnemonic_checksum_bits = &bits[entropy_len_bits..total_bits];
 
         for i in 0..checksum_len_bits {
@@ -216,16 +235,16 @@ impl<'a> Mnemonic<'a> {
 
     pub fn parse_str_without_checksum(
         lang_words: &'a [&'a str; MAX_WORDS_DICT],
-        s: &str,
+        s: &SecretString,
     ) -> Result<Self, Bip39Error> {
         #[cfg(feature = "std")]
         let s_normalized = {
-            let mut cow = s.into();
+            let mut cow = s.expose_secret().into();
             Mnemonic::normalize_utf8_cow(&mut cow);
             cow
         };
         #[cfg(not(feature = "std"))]
-        let s_normalized = s;
+        let s_normalized = s.expose_secret();
 
         let mut temp_words = [""; MAX_NB_WORDS + 1];
         let mut word_count = 0;
@@ -261,9 +280,9 @@ impl<'a> Mnemonic<'a> {
         })
     }
 
-    pub fn to_entropy(&'a self) -> EntropyIter<'a> {
+    pub fn to_entropy(&'a self) -> SecretSlice<u8> {
         let entropy_bytes_len = (self.word_count / 3) * 4;
-        EntropyIter {
+        let bytes: Vec<u8> = EntropyIter {
             mnemonic: self,
             word_idx: 0,
             bits: 0,
@@ -271,6 +290,8 @@ impl<'a> Mnemonic<'a> {
             bytes_produced: 0,
             bytes_to_produce: entropy_bytes_len,
         }
+        .collect();
+        SecretSlice::from(bytes)
     }
 
     pub fn from_entropy(
@@ -341,7 +362,9 @@ impl<'a> Mnemonic<'a> {
 
         Rng::fill_bytes(rng, &mut entropy[0..entropy_bytes]);
 
-        Mnemonic::from_entropy(lang_words, &entropy[0..entropy_bytes])
+        let result = Mnemonic::from_entropy(lang_words, &entropy[0..entropy_bytes]);
+        entropy.zeroize();
+        result
     }
 
     pub fn checksum(&self) -> u8 {
@@ -356,6 +379,7 @@ mod tests_mnemonic {
     use super::*;
     use hex;
     use rand::{RngCore, SeedableRng};
+    use secrecy::ExposeSecret;
 
     impl<T: RngCore> crate::rng::Rng for T {
         fn fill_bytes(&mut self, dest: &mut [u8]) {
@@ -2737,7 +2761,7 @@ mod tests_mnemonic {
         assert_eq!(
             Mnemonic::parse_str(
                 &EN_WORDS,
-                "getter advice cage absurd amount doctor acoustic avoid letter advice cage above",
+                &SecretString::from("getter advice cage absurd amount doctor acoustic avoid letter advice cage above"),
             ),
             Err(Bip39Error::UnknownWord(0))
         );
@@ -2745,7 +2769,7 @@ mod tests_mnemonic {
         assert_eq!(
             Mnemonic::parse_str(
                 &EN_WORDS,
-                "letter advice cagex absurd amount doctor acoustic avoid letter advice cage above",
+                &SecretString::from("letter advice cagex absurd amount doctor acoustic avoid letter advice cage above"),
             ),
             Err(Bip39Error::UnknownWord(2))
         );
@@ -2753,7 +2777,7 @@ mod tests_mnemonic {
         assert_eq!(
             Mnemonic::parse_str(
                 &EN_WORDS,
-                "advice cage absurd amount doctor acoustic avoid letter advice cage above",
+                &SecretString::from("advice cage absurd amount doctor acoustic avoid letter advice cage above"),
             ),
             Err(Bip39Error::BadWordCount(11))
         );
@@ -2761,7 +2785,7 @@ mod tests_mnemonic {
         assert_eq!(
             Mnemonic::parse_str(
                 &EN_WORDS,
-                "primary advice cage absurd amount doctor acoustic avoid letter advice cage above",
+                &SecretString::from("primary advice cage absurd amount doctor acoustic avoid letter advice cage above"),
             ),
             Err(Bip39Error::InvalidChecksum)
         );
@@ -2900,45 +2924,45 @@ mod tests_mnemonic {
 
             assert_eq!(
                 mnemonic,
-                Mnemonic::parse_str(&EN_WORDS, mnemonic_str).unwrap(),
+                Mnemonic::parse_str(&EN_WORDS, &SecretString::from(mnemonic_str)).unwrap(),
                 "failed vector: {}",
                 mnemonic_str
             );
             assert_eq!(
                 &seed[..],
-                &mnemonic.to_seed("TREZOR").unwrap()[..],
+                mnemonic.to_seed(&SecretString::from("TREZOR")).unwrap().expose_secret().as_ref(),
                 "failed vector: {}",
                 mnemonic_str
             );
 
             {
                 assert_eq!(
-                    &mnemonic.to_string(),
+                    mnemonic.to_phrase().expose_secret(),
                     mnemonic_str,
                     "failed vector: {}",
                     mnemonic_str
                 );
                 assert_eq!(
                     mnemonic,
-                    Mnemonic::parse_str(&EN_WORDS, mnemonic_str).unwrap(),
+                    Mnemonic::parse_str(&EN_WORDS, &SecretString::from(mnemonic_str)).unwrap(),
                     "failed vector: {}",
                     mnemonic_str
                 );
                 assert_eq!(
                     mnemonic,
-                    Mnemonic::parse_str(&EN_WORDS, mnemonic_str).unwrap(),
+                    Mnemonic::parse_str(&EN_WORDS, &SecretString::from(mnemonic_str)).unwrap(),
                     "failed vector: {}",
                     mnemonic_str
                 );
                 assert_eq!(
                     &seed[..],
-                    &mnemonic.to_seed("TREZOR").unwrap()[..],
+                    mnemonic.to_seed(&SecretString::from("TREZOR")).unwrap().expose_secret().as_ref(),
                     "failed vector: {}",
                     mnemonic_str
                 );
                 assert_eq!(
-                    &entropy,
-                    &mnemonic.to_entropy().into_iter().collect::<Vec<u8>>(),
+                    entropy,
+                    mnemonic.to_entropy().expose_secret().to_vec(),
                     "failed vector: {}",
                     mnemonic_str
                 );
@@ -2951,13 +2975,13 @@ mod tests_mnemonic {
         let mnemonic_str =
             "sword sure throw slide garden science six destroy canvas ceiling negative black";
 
-        let mnemonic = Mnemonic::parse_str_without_checksum(&EN_WORDS, mnemonic_str).unwrap();
-        let entropy = mnemonic.to_entropy().collect::<Vec<u8>>();
+        let mnemonic = Mnemonic::parse_str_without_checksum(&EN_WORDS, &SecretString::from(mnemonic_str)).unwrap();
+        let entropy = mnemonic.to_entropy().expose_secret().to_vec();
         let restored_mnemonic = Mnemonic::from_entropy(&EN_WORDS, &entropy).unwrap();
 
         assert_ne!(
-            mnemonic.to_string(),
-            restored_mnemonic.to_string(),
+            mnemonic.to_phrase().expose_secret(),
+            restored_mnemonic.to_phrase().expose_secret(),
             "Restored mnemonic should match original"
         );
     }
@@ -3123,17 +3147,17 @@ mod tests_mnemonic {
 
             assert_eq!(
                 seed,
-                &mnemonic.to_seed(passphrase).unwrap()[..],
+                mnemonic.to_seed(&SecretString::from(passphrase)).unwrap().expose_secret().as_ref(),
                 "failed vector: {}",
                 mnemonic_str
             );
-            let rt = Mnemonic::parse_str(&JA_WORDS, &mnemonic.to_string()).unwrap();
-            assert_eq!(seed, &rt.to_seed(passphrase).unwrap()[..]);
+            let rt = Mnemonic::parse_str(&JA_WORDS, &mnemonic.to_phrase()).unwrap();
+            assert_eq!(seed, rt.to_seed(&SecretString::from(passphrase)).unwrap().expose_secret().as_ref());
 
-            let mnemonic = Mnemonic::parse_str(&JA_WORDS, mnemonic_str).unwrap();
+            let mnemonic = Mnemonic::parse_str(&JA_WORDS, &SecretString::from(mnemonic_str)).unwrap();
             assert_eq!(
                 seed,
-                &mnemonic.to_seed(passphrase).unwrap()[..],
+                mnemonic.to_seed(&SecretString::from(passphrase)).unwrap().expose_secret().as_ref(),
                 "failed vector: {}",
                 mnemonic_str
             );
@@ -3148,7 +3172,7 @@ mod tests_mnemonic {
             let mnemonic = Mnemonic::generate(&mut rng, &EN_WORDS, word_count).unwrap();
             assert_eq!(mnemonic.word_count, word_count);
 
-            let entropy = mnemonic.to_entropy().collect::<Vec<u8>>();
+            let entropy = mnemonic.to_entropy().expose_secret().to_vec();
             let restored_mnemonic = Mnemonic::from_entropy(&EN_WORDS, &entropy).unwrap();
             assert_eq!(mnemonic, restored_mnemonic);
 
